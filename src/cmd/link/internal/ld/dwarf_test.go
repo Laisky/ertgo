@@ -1462,14 +1462,13 @@ func TestIssue42484(t *testing.T) {
 // captures the name, order, and classification of the subprogram's
 // input and output parameters. For example, for the go function
 //
-//     func foo(i1 int, f1 float64) (string, bool) {
+//	func foo(i1 int, f1 float64) (string, bool) {
 //
 // this function would return a string something like
 //
-//     i1:0:1 f1:1:1 ~r0:2:2 ~r1:3:2
+//	i1:0:1 f1:1:1 ~r0:2:2 ~r1:3:2
 //
 // where each chunk above is of the form NAME:ORDER:INOUTCLASSIFICATION
-//
 func processParams(die *dwarf.Entry, ex *dwtest.Examiner) string {
 	// Values in the returned map are of the form <order>:<varparam>
 	// where order is the order within the child DIE list of the
@@ -1841,5 +1840,84 @@ func main() {
 			t.Errorf("check failed for testcase %s -- wanted:\n%s\ngot:%s\n",
 				tc.tag, tc.expected, foundParams)
 		}
+	}
+}
+func TestIssue54320(t *testing.T) {
+	// Check that when trampolines are used, the DWARF LPT is correctly
+	// emitted in the final binary
+	testenv.MustHaveGoBuild(t)
+
+	if runtime.GOOS == "plan9" {
+		t.Skip("skipping on plan9; no DWARF symbol table in executables")
+	}
+
+	t.Parallel()
+
+	const prog = `
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Printf("Hello world\n");
+}
+`
+
+	dir := t.TempDir()
+	f := gobuild(t, dir, prog, "-ldflags=-debugtramp=2")
+	defer f.Close()
+
+	d, err := f.DWARF()
+	if err != nil {
+		t.Fatalf("error reading DWARF: %v", err)
+	}
+
+	rdr := d.Reader()
+	found := false
+	var entry *dwarf.Entry
+	for entry, err = rdr.Next(); entry != nil; entry, err = rdr.Next() {
+		if err != nil {
+			t.Fatalf("error reading DWARF: %v", err)
+		}
+		if entry.Tag != dwarf.TagCompileUnit {
+			continue
+		}
+		name, _ := entry.Val(dwarf.AttrName).(string)
+		if name == "main" {
+			found = true
+			break
+		}
+		rdr.SkipChildren()
+	}
+
+	if !found {
+		t.Fatalf("could not find main compile unit")
+	}
+	lr, err := d.LineReader(entry)
+	if err != nil {
+		t.Fatalf("error obtaining linereader: %v", err)
+	}
+
+	var le dwarf.LineEntry
+	found = false
+	for {
+		if err := lr.Next(&le); err != nil {
+			if err == io.EOF {
+				break
+			}
+			t.Fatalf("error reading linentry: %v", err)
+		}
+		// check LE contains an entry to test.go
+		if le.File == nil {
+			continue
+		}
+		file := filepath.Base(le.File.Name)
+		if file == "test.go" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("no LPT entries for test.go")
 	}
 }

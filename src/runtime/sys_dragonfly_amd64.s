@@ -16,7 +16,7 @@ TEXT runtime·sys_umtx_sleep(SB),NOSPLIT,$0
 	MOVL val+8(FP), SI		// arg 2 - value
 	MOVL timeout+12(FP), DX		// arg 3 - timeout
 	MOVL $469, AX		// umtx_sleep
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	NEGQ	AX
 	MOVL	AX, ret+16(FP)
@@ -26,7 +26,7 @@ TEXT runtime·sys_umtx_wakeup(SB),NOSPLIT,$0
 	MOVQ addr+0(FP), DI		// arg 1 - ptr
 	MOVL val+8(FP), SI		// arg 2 - count
 	MOVL $470, AX		// umtx_wakeup
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	NEGQ	AX
 	MOVL	AX, ret+16(FP)
@@ -35,7 +35,7 @@ TEXT runtime·sys_umtx_wakeup(SB),NOSPLIT,$0
 TEXT runtime·lwp_create(SB),NOSPLIT,$0
 	MOVQ param+0(FP), DI		// arg 1 - params
 	MOVL $495, AX		// lwp_create
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	MOVL	AX, ret+8(FP)
 	RET
 
@@ -61,11 +61,11 @@ TEXT runtime·lwp_start(SB),NOSPLIT,$0
 TEXT runtime·exit(SB),NOSPLIT,$-8
 	MOVL	code+0(FP), DI		// arg 1 exit status
 	MOVL	$1, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	MOVL	$0xf1, 0xf1  // crash
 	RET
 
-// func exitThread(wait *uint32)
+// func exitThread(wait *atomic.Uint32)
 TEXT runtime·exitThread(SB),NOSPLIT,$0-8
 	MOVQ	wait+0(FP), AX
 	// We're done using the stack.
@@ -74,7 +74,7 @@ TEXT runtime·exitThread(SB),NOSPLIT,$0-8
 	MOVL	$0, SI		// arg 2 status
 	MOVL	$0, DX		// arg 3 addr
 	MOVL	$494, AX	// extexit
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	MOVL	$0xf1, 0xf1  // crash
 	JMP	0(PC)
 
@@ -83,7 +83,7 @@ TEXT runtime·open(SB),NOSPLIT,$-8
 	MOVL	mode+8(FP), SI		// arg 2 flags
 	MOVL	perm+12(FP), DX		// arg 3 mode
 	MOVL	$5, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	MOVL	$-1, AX
 	MOVL	AX, ret+16(FP)
@@ -92,7 +92,7 @@ TEXT runtime·open(SB),NOSPLIT,$-8
 TEXT runtime·closefd(SB),NOSPLIT,$-8
 	MOVL	fd+0(FP), DI		// arg 1 fd
 	MOVL	$6, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	MOVL	$-1, AX
 	MOVL	AX, ret+8(FP)
@@ -103,25 +103,10 @@ TEXT runtime·read(SB),NOSPLIT,$-8
 	MOVQ	p+8(FP), SI		// arg 2 buf
 	MOVL	n+16(FP), DX		// arg 3 count
 	MOVL	$3, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	NEGL	AX			// caller expects negative errno
 	MOVL	AX, ret+24(FP)
-	RET
-
-// func pipe() (r, w int32, errno int32)
-TEXT runtime·pipe(SB),NOSPLIT,$0-12
-	MOVL	$42, AX
-	SYSCALL
-	JCC	pipeok
-	MOVL	$-1,r+0(FP)
-	MOVL	$-1,w+4(FP)
-	MOVL	AX, errno+8(FP)
-	RET
-pipeok:
-	MOVL	AX, r+0(FP)
-	MOVL	DX, w+4(FP)
-	MOVL	$0, errno+8(FP)
 	RET
 
 // func pipe2(flags int32) (r, w int32, errno int32)
@@ -130,7 +115,7 @@ TEXT runtime·pipe2(SB),NOSPLIT,$0-20
 	// dragonfly expects flags as the 2nd argument
 	MOVL	flags+0(FP), SI
 	MOVL	$538, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	pipe2ok
 	MOVL	$-1,r+8(FP)
 	MOVL	$-1,w+12(FP)
@@ -147,7 +132,7 @@ TEXT runtime·write1(SB),NOSPLIT,$-8
 	MOVQ	p+8(FP), SI		// arg 2 buf
 	MOVL	n+16(FP), DX		// arg 3 count
 	MOVL	$4, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	NEGL	AX			// caller expects negative errno
 	MOVL	AX, ret+24(FP)
@@ -155,7 +140,7 @@ TEXT runtime·write1(SB),NOSPLIT,$-8
 
 TEXT runtime·lwp_gettid(SB),NOSPLIT,$0-4
 	MOVL	$496, AX	// lwp_gettid
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	MOVL	AX, ret+0(FP)
 	RET
 
@@ -164,16 +149,16 @@ TEXT runtime·lwp_kill(SB),NOSPLIT,$0-16
 	MOVL	tid+4(FP), SI	// arg 2 - tid
 	MOVQ	sig+8(FP), DX	// arg 3 - signum
 	MOVL	$497, AX	// lwp_kill
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	RET
 
 TEXT runtime·raiseproc(SB),NOSPLIT,$0
 	MOVL	$20, AX		// getpid
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	MOVQ	AX, DI		// arg 1 - pid
 	MOVL	sig+0(FP), SI	// arg 2 - signum
 	MOVL	$37, AX		// kill
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	RET
 
 TEXT runtime·setitimer(SB), NOSPLIT, $-8
@@ -181,7 +166,7 @@ TEXT runtime·setitimer(SB), NOSPLIT, $-8
 	MOVQ	new+8(FP), SI
 	MOVQ	old+16(FP), DX
 	MOVL	$83, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	RET
 
 // func walltime() (sec int64, nsec int32)
@@ -189,7 +174,7 @@ TEXT runtime·walltime(SB), NOSPLIT, $32
 	MOVL	$232, AX // clock_gettime
 	MOVQ	$0, DI  	// CLOCK_REALTIME
 	LEAQ	8(SP), SI
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	MOVQ	8(SP), AX	// sec
 	MOVQ	16(SP), DX	// nsec
 
@@ -202,7 +187,7 @@ TEXT runtime·nanotime1(SB), NOSPLIT, $32
 	MOVL	$232, AX
 	MOVQ	$4, DI  	// CLOCK_MONOTONIC
 	LEAQ	8(SP), SI
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	MOVQ	8(SP), AX	// sec
 	MOVQ	16(SP), DX	// nsec
 
@@ -218,7 +203,7 @@ TEXT runtime·sigaction(SB),NOSPLIT,$-8
 	MOVQ	new+8(FP), SI		// arg 2 act
 	MOVQ	old+16(FP), DX		// arg 3 oact
 	MOVL	$342, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	MOVL	$0xf1, 0xf1  // crash
 	RET
@@ -237,17 +222,25 @@ TEXT runtime·sigfwd(SB),NOSPLIT,$0-32
 	RET
 
 // Called using C ABI.
-TEXT runtime·sigtramp(SB),NOSPLIT,$0
+TEXT runtime·sigtramp(SB),NOSPLIT|TOPFRAME,$0
 	// Transition from C ABI to Go ABI.
 	PUSH_REGS_HOST_TO_ABI0()
 
-	// Call into the Go signal handler
+	// Set up ABIInternal environment: g in R14, cleared X15.
+	get_tls(R12)
+	MOVQ	g(R12), R14
+	PXOR	X15, X15
+
+	// Reserve space for spill slots.
 	NOP	SP		// disable vet stack checking
-	ADJSP	$24
-	MOVQ	DI, 0(SP)	// sig
-	MOVQ	SI, 8(SP)	// info
-	MOVQ	DX, 16(SP)	// ctx
-	CALL	·sigtrampgo(SB)
+	ADJSP   $24
+
+	// Call into the Go signal handler
+	MOVQ	DI, AX	// sig
+	MOVQ	SI, BX	// info
+	MOVQ	DX, CX	// ctx
+	CALL	·sigtrampgo<ABIInternal>(SB)
+
 	ADJSP	$-24
 
 	POP_REGS_HOST_TO_ABI0()
@@ -264,7 +257,7 @@ TEXT runtime·mmap(SB),NOSPLIT,$0
 	MOVQ	R9, 8(SP)		// arg 7 - offset (passed on stack)
 	MOVQ	$0, R9			// arg 6 - pad
 	MOVL	$197, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	ok
 	ADDQ	$16, SP
 	MOVQ	$0, p+32(FP)
@@ -280,7 +273,7 @@ TEXT runtime·munmap(SB),NOSPLIT,$0
 	MOVQ	addr+0(FP), DI		// arg 1 addr
 	MOVQ	n+8(FP), SI		// arg 2 len
 	MOVL	$73, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	MOVL	$0xf1, 0xf1  // crash
 	RET
@@ -290,7 +283,7 @@ TEXT runtime·madvise(SB),NOSPLIT,$0
 	MOVQ	n+8(FP), SI
 	MOVL	flags+16(FP), DX
 	MOVQ	$75, AX	// madvise
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	MOVL	$-1, AX
 	MOVL	AX, ret+24(FP)
@@ -300,7 +293,7 @@ TEXT runtime·sigaltstack(SB),NOSPLIT,$-8
 	MOVQ	new+0(FP), DI
 	MOVQ	old+8(FP), SI
 	MOVQ	$53, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	MOVL	$0xf1, 0xf1  // crash
 	RET
@@ -318,7 +311,7 @@ TEXT runtime·usleep(SB),NOSPLIT,$16
 	MOVQ	SP, DI			// arg 1 - rqtp
 	MOVQ	$0, SI			// arg 2 - rmtp
 	MOVL	$240, AX		// sys_nanosleep
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	RET
 
 // set tls base to DI
@@ -330,7 +323,7 @@ TEXT runtime·settls(SB),NOSPLIT,$16
 	MOVQ	SP, SI			// arg 2 - tls_info
 	MOVQ	$16, DX			// arg 3 - infosize
 	MOVQ	$472, AX		// set_tls_area
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	MOVL	$0xf1, 0xf1  // crash
 	RET
@@ -343,7 +336,7 @@ TEXT runtime·sysctl(SB),NOSPLIT,$0
 	MOVQ	dst+32(FP), R8		// arg 5 - newp
 	MOVQ	ndst+40(FP), R9		// arg 6 - newlen
 	MOVQ	$202, AX		// sys___sysctl
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC 4(PC)
 	NEGQ	AX
 	MOVL	AX, ret+48(FP)
@@ -354,7 +347,7 @@ TEXT runtime·sysctl(SB),NOSPLIT,$0
 
 TEXT runtime·osyield(SB),NOSPLIT,$-4
 	MOVL	$331, AX		// sys_sched_yield
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	RET
 
 TEXT runtime·sigprocmask(SB),NOSPLIT,$0
@@ -362,7 +355,7 @@ TEXT runtime·sigprocmask(SB),NOSPLIT,$0
 	MOVQ	new+8(FP), SI		// arg 2 - set
 	MOVQ	old+16(FP), DX		// arg 3 - oset
 	MOVL	$340, AX		// sys_sigprocmask
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JAE	2(PC)
 	MOVL	$0xf1, 0xf1  // crash
 	RET
@@ -373,7 +366,7 @@ TEXT runtime·kqueue(SB),NOSPLIT,$0
 	MOVQ	$0, SI
 	MOVQ	$0, DX
 	MOVL	$362, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	NEGQ	AX
 	MOVL	AX, ret+0(FP)
@@ -388,7 +381,7 @@ TEXT runtime·kevent(SB),NOSPLIT,$0
 	MOVL	nev+32(FP), R8
 	MOVQ	ts+40(FP), R9
 	MOVL	$363, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	JCC	2(PC)
 	NEGQ	AX
 	MOVL	AX, ret+48(FP)
@@ -400,20 +393,5 @@ TEXT runtime·closeonexec(SB),NOSPLIT,$0
 	MOVQ	$2, SI		// F_SETFD
 	MOVQ	$1, DX		// FD_CLOEXEC
 	MOVL	$92, AX		// fcntl
-	SYSCALL
-	RET
-
-// func runtime·setNonblock(int32 fd)
-TEXT runtime·setNonblock(SB),NOSPLIT,$0-4
-	MOVL    fd+0(FP), DI  // fd
-	MOVQ    $3, SI  // F_GETFL
-	MOVQ    $0, DX
-	MOVL	$92, AX // fcntl
-	SYSCALL
-	MOVL	fd+0(FP), DI // fd
-	MOVQ	$4, SI // F_SETFL
-	MOVQ	$4, DX // O_NONBLOCK
-	ORL	AX, DX
-	MOVL	$92, AX // fcntl
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	RET

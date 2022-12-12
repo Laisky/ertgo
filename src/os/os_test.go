@@ -223,6 +223,29 @@ func TestStatError(t *testing.T) {
 	}
 }
 
+func TestStatSymlinkLoop(t *testing.T) {
+	testenv.MustHaveSymlink(t)
+
+	defer chtmpdir(t)()
+
+	err := os.Symlink("x", "y")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove("y")
+
+	err = os.Symlink("y", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove("x")
+
+	_, err = os.Stat("x")
+	if _, ok := err.(*fs.PathError); !ok {
+		t.Errorf("expected *PathError, got %T: %v\n", err, err)
+	}
+}
+
 func TestFstat(t *testing.T) {
 	path := sfdir + "/" + sfname
 	file, err1 := Open(path)
@@ -1676,16 +1699,21 @@ func runBinHostname(t *testing.T) string {
 		t.Fatal(err)
 	}
 	defer r.Close()
-	const path = "/bin/hostname"
+
+	path, err := osexec.LookPath("hostname")
+	if err != nil {
+		if errors.Is(err, osexec.ErrNotFound) {
+			t.Skip("skipping test; test requires hostname but it does not exist")
+		}
+		t.Fatal(err)
+	}
+
 	argv := []string{"hostname"}
 	if runtime.GOOS == "aix" {
 		argv = []string{"hostname", "-s"}
 	}
 	p, err := StartProcess(path, argv, &ProcAttr{Files: []*File{nil, w, Stderr}})
 	if err != nil {
-		if _, err := Stat(path); IsNotExist(err) {
-			t.Skipf("skipping test; test requires %s but it does not exist", path)
-		}
 		t.Fatal(err)
 	}
 	w.Close()
@@ -1713,7 +1741,7 @@ func runBinHostname(t *testing.T) string {
 
 func testWindowsHostname(t *testing.T, hostname string) {
 	cmd := osexec.Command("hostname")
-	out, err := cmd.CombinedOutput()
+	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("Failed to execute hostname command: %v %s", err, out)
 	}
@@ -2406,6 +2434,9 @@ func TestRemoveAllRace(t *testing.T) {
 		// like it does on Unix.
 		t.Skip("skipping on windows")
 	}
+	if runtime.GOOS == "dragonfly" {
+		testenv.SkipFlaky(t, 52301)
+	}
 
 	n := runtime.GOMAXPROCS(16)
 	defer runtime.GOMAXPROCS(n)
@@ -2695,6 +2726,44 @@ func TestDirFS(t *testing.T) {
 	_, err := d.Open(`testdata\dirfs`)
 	if err == nil {
 		t.Fatalf(`Open testdata\dirfs succeeded`)
+	}
+
+	// Test that Open does not open Windows device files.
+	_, err = d.Open(`NUL`)
+	if err == nil {
+		t.Errorf(`Open NUL succeeded`)
+	}
+}
+
+func TestDirFSRootDir(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd = cwd[len(filepath.VolumeName(cwd)):] // trim volume prefix (C:) on Windows
+	cwd = filepath.ToSlash(cwd)               // convert \ to /
+	cwd = strings.TrimPrefix(cwd, "/")        // trim leading /
+
+	// Test that Open can open a path starting at /.
+	d := DirFS("/")
+	f, err := d.Open(cwd + "/testdata/dirfs/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+}
+
+func TestDirFSEmptyDir(t *testing.T) {
+	d := DirFS("")
+	cwd, _ := os.Getwd()
+	for _, path := range []string{
+		"testdata/dirfs/a",                          // not DirFS(".")
+		filepath.ToSlash(cwd) + "/testdata/dirfs/a", // not DirFS("/")
+	} {
+		_, err := d.Open(path)
+		if err == nil {
+			t.Fatalf(`DirFS("").Open(%q) succeeded`, path)
+		}
 	}
 }
 

@@ -29,7 +29,7 @@ TEXT ·SyscallNoError(SB),NOSPLIT,$0-48
 	MOVQ	$0, R8
 	MOVQ	$0, R9
 	MOVQ	trap+0(FP), AX	// syscall entry
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	MOVQ	AX, r1+32(FP)
 	MOVQ	DX, r2+40(FP)
 	CALL	runtime·exitsyscall(SB)
@@ -49,7 +49,7 @@ TEXT ·RawSyscallNoError(SB),NOSPLIT,$0-48
 	MOVQ	$0, R8
 	MOVQ	$0, R9
 	MOVQ	trap+0(FP), AX	// syscall entry
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 	MOVQ	AX, r1+32(FP)
 	MOVQ	DX, r2+40(FP)
 	RET

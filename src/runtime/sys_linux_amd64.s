@@ -23,7 +23,6 @@
 #define SYS_rt_sigaction	13
 #define SYS_rt_sigprocmask	14
 #define SYS_rt_sigreturn	15
-#define SYS_pipe		22
 #define SYS_sched_yield 	24
 #define SYS_mincore		27
 #define SYS_madvise		28
@@ -61,7 +60,7 @@ TEXT runtime·exit(SB),NOSPLIT,$0-4
 	CALL	runtime·invoke_libc_syscall(SB)
 	RET
 
-// func exitThread(wait *uint32)
+// func exitThread(wait *atomic.Uint32)
 TEXT runtime·exitThread(SB),NOSPLIT,$0-8
 	MOVQ	wait+0(FP), AX
 	// We're done using the stack.
@@ -113,14 +112,6 @@ TEXT runtime·read(SB),NOSPLIT,$0-28
 	MOVL	$SYS_read, AX
 	CALL	runtime·invoke_libc_syscall(SB)
 	MOVL	AX, ret+24(FP)
-	RET
-
-// func pipe() (r, w int32, errno int32)
-TEXT runtime·pipe(SB),NOSPLIT,$0-12
-	LEAQ	r+0(FP), DI
-	MOVL	$SYS_pipe, AX
-	CALL	runtime·invoke_libc_syscall(SB)
-	MOVL	AX, errno+8(FP)
 	RET
 
 // func pipe2(flags int32) (r, w int32, errno int32)
@@ -274,8 +265,8 @@ noswitch:
 	LEAQ	0(SP), SI
 	MOVQ	runtime·vdsoClockgettimeSym(SB), AX
 	CMPQ	AX, $0
-//	JEQ	fallback
-	CALL	libc_clock_gettime(SB)	// EDG: use libc
+	JEQ	fallback
+	CALL	AX
 ret:
 	MOVQ	0(SP), AX	// sec
 	MOVQ	8(SP), DX	// nsec
@@ -349,17 +340,25 @@ TEXT runtime·sigfwd(SB),NOSPLIT,$0-32
 	RET
 
 // Called using C ABI.
-TEXT runtime·sigtramp(SB),NOSPLIT,$0
+TEXT runtime·sigtramp(SB),NOSPLIT|TOPFRAME,$0
 	// Transition from C ABI to Go ABI.
 	PUSH_REGS_HOST_TO_ABI0()
 
-	// Call into the Go signal handler
+	// Set up ABIInternal environment: g in R14, cleared X15.
+	get_tls(R12)
+	MOVQ	g(R12), R14
+	PXOR	X15, X15
+
+	// Reserve space for spill slots.
 	NOP	SP		// disable vet stack checking
-        ADJSP   $24
-	MOVQ	DI, 0(SP)	// sig
-	MOVQ	SI, 8(SP)	// info
-	MOVQ	DX, 16(SP)	// ctx
-	CALL	·sigtrampgo(SB)
+	ADJSP   $24
+
+	// Call into the Go signal handler
+	MOVQ	DI, AX	// sig
+	MOVQ	SI, BX	// info
+	MOVQ	DX, CX	// ctx
+	CALL	·sigtrampgo<ABIInternal>(SB)
+
 	ADJSP	$-24
 
         POP_REGS_HOST_TO_ABI0()
@@ -370,13 +369,21 @@ TEXT runtime·sigprofNonGoWrapper<>(SB),NOSPLIT,$0
 	// Transition from C ABI to Go ABI.
 	PUSH_REGS_HOST_TO_ABI0()
 
-	// Call into the Go signal handler
+	// Set up ABIInternal environment: g in R14, cleared X15.
+	get_tls(R12)
+	MOVQ	g(R12), R14
+	PXOR	X15, X15
+
+	// Reserve space for spill slots.
 	NOP	SP		// disable vet stack checking
-	ADJSP	$24
-	MOVL	DI, 0(SP)	// sig
-	MOVQ	SI, 8(SP)	// info
-	MOVQ	DX, 16(SP)	// ctx
-	CALL	·sigprofNonGo(SB)
+	ADJSP   $24
+
+	// Call into the Go signal handler
+	MOVQ	DI, AX	// sig
+	MOVQ	SI, BX	// info
+	MOVQ	DX, CX	// ctx
+	CALL	·sigprofNonGo<ABIInternal>(SB)
+
 	ADJSP	$-24
 
 	POP_REGS_HOST_TO_ABI0()
@@ -709,21 +716,6 @@ TEXT runtime·closeonexec(SB),NOSPLIT,$0
 	CALL	runtime·invoke_libc_syscall(SB)
 	RET
 
-// func runtime·setNonblock(int32 fd)
-TEXT runtime·setNonblock(SB),NOSPLIT,$0-4
-	MOVL    fd+0(FP), DI  // fd
-	MOVQ    $3, SI  // F_GETFL
-	MOVQ    $0, DX
-	MOVL	$SYS_fcntl, AX
-	CALL	runtime·invoke_libc_syscall(SB)
-	MOVL	fd+0(FP), DI // fd
-	MOVQ	$4, SI // F_SETFL
-	MOVQ	$0x800, DX // O_NONBLOCK
-	ORL	AX, DX
-	MOVL	$SYS_fcntl, AX
-	CALL	runtime·invoke_libc_syscall(SB)
-	RET
-
 // int access(const char *name, int mode)
 TEXT runtime·access(SB),NOSPLIT,$0
 	// This uses faccessat instead of access, because Android O blocks access.
@@ -765,52 +757,44 @@ TEXT runtime·sbrk0(SB),NOSPLIT,$0-8
 	MOVQ	AX, ret+0(FP)
 	RET
 
-// EDG: This function is called in place of the SYSCALL instruction.
-TEXT runtime·invoke_libc_syscall(SB),NOSPLIT,$0
-	// syscall args in rdi, rsi, rdx, r10, r8, r9
-	// syscall number in rax
+// Call a library function with SysV calling conventions.
+// The called function can take a maximum of 6 INTEGER class arguments,
+// see
+//   Michael Matz, Jan Hubicka, Andreas Jaeger, and Mark Mitchell
+//   System V Application Binary Interface
+//   AMD64 Architecture Processor Supplement
+// section 3.2.3.
+//
+// Called by runtime·asmcgocall or runtime·cgocall.
+// NOT USING GO CALLING CONVENTION.
+TEXT runtime·asmsysvicall6(SB),NOSPLIT,$0
+	// asmcgocall will put first argument into DI.
+	PUSHQ	DI			// save for later
+	MOVQ	libcall_fn(DI), AX
+	MOVQ	libcall_args(DI), R11
+	MOVQ	libcall_n(DI), R10
 
-	// Switch to g0 stack. See comment above in runtime·nanotime1.
-	MOVQ	SP, R12	// Save old SP; R12 unchanged by C code.
-	get_tls(CX)
-	MOVQ	g(CX), CX
-	TESTQ	CX, CX
-	JE	noswitch
-	MOVQ	g_m(CX), BX // BX unchanged by C code.
-	CMPQ	CX, m_curg(BX)	// Only switch if on curg.
-	JNE	noswitch
-	MOVQ	m_g0(BX), CX
-	MOVQ	(g_sched+gobuf_sp)(CX), SP	// Set SP to g0 stack
-noswitch:
-	ANDQ	$~15, SP	// Align for C code
-	SUBQ	$16, SP
-	// Call
-	// long syscall(long number, ...);
-	// with System V AMD64 calling convention:
-	// first 6 args in rdi, rsi, rdx, rcx, r8, r9
-	// additional args on the stack
-	MOVQ	R9, (SP)
-	MOVQ	R8, R9
-	MOVQ	R10, R8
-	MOVQ	DX, CX
-	MOVQ	SI, DX
-	MOVQ	DI, SI
-	MOVQ	AX, DI
-	CALL 	libc_syscall(SB)
-	MOVQ	R12, SP		// Restore real SP
-	CMPQ	AX, $-1
-	JE	err
-	RET
-err:
+	CMPQ	R11, $0
+	JEQ	skipargs
+	// Load 6 args into correspondent registers.
+	MOVQ	0(R11), DI
+	MOVQ	8(R11), SI
+	MOVQ	16(R11), DX
+	MOVQ	24(R11), CX
+	MOVQ	32(R11), R8
+	MOVQ	40(R11), R9
+skipargs:
+
+	// Call SysV function
+	CALL	AX
+
+	// Return result
+	POPQ	DI
+	MOVQ	AX, libcall_r1(DI)
+	MOVQ	DX, libcall_r2(DI)
+
 	CALL	libc_errno(SB)
 	MOVQ	(AX), AX
-	NEGQ	AX
-	RET
+	MOVQ	AX, libcall_err(DI)
 
-TEXT runtime·eventfd(SB),NOSPLIT,$0
-	MOVL	count+0(FP), DI
-	MOVL	flags+4(FP), SI
-	MOVQ	$290, AX	// SYS_eventfd2
-	CALL	runtime·invoke_libc_syscall(SB)
-	MOVL	AX, ret+8(FP)
 	RET

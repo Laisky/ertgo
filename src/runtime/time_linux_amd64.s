@@ -43,13 +43,13 @@ noswitch:
 	LEAQ	16(SP), SI
 	MOVQ	runtime·vdsoClockgettimeSym(SB), AX
 	CMPQ	AX, $0
-//	JEQ	fallback
-	CALL	libc_clock_gettime(SB)	// EDG: use libc
+	JEQ	fallback
+	CALL	AX
 
 	MOVL	$1, DI // CLOCK_MONOTONIC
 	LEAQ	0(SP), SI
 	MOVQ	runtime·vdsoClockgettimeSym(SB), AX
-	CALL	libc_clock_gettime(SB)	// EDG: use libc
+	CALL	AX
 
 ret:
 	MOVQ	16(SP), AX	// realtime sec
@@ -77,11 +77,11 @@ ret:
 
 fallback:
 	MOVQ	$SYS_clock_gettime, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 
 	MOVL	$1, DI // CLOCK_MONOTONIC
 	LEAQ	0(SP), SI
 	MOVQ	$SYS_clock_gettime, AX
-	SYSCALL
+	CALL	runtime·invoke_libc_syscall(SB)
 
 	JMP	ret

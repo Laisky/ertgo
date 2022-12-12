@@ -469,6 +469,7 @@ func sum5andPair(i1, i2, i3, i4, i5 uint8Pair) uintptr {
 // that insufficient spill slots allocated (according to the ABI)
 // may cause compiler-generated spills to clobber the return PC.
 // Then, the GC stack scanning will catch that.
+//
 //go:registerparams
 func sum9andGC(i1, i2, i3, i4, i5, i6, i7, i8, i9 uint32) uintptr {
 	runtime.GC()
@@ -628,7 +629,7 @@ func TestOutputDebugString(t *testing.T) {
 }
 
 func TestRaiseException(t *testing.T) {
-	if testenv.Builder() == "windows-amd64-2012" {
+	if strings.HasPrefix(testenv.Builder(), "windows-amd64-2012") {
 		testenv.SkipFlaky(t, 49681)
 	}
 	o := runTestProg(t, "testprog", "RaiseException")
